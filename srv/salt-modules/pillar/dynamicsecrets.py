@@ -15,9 +15,38 @@ _log.info("dynamic secrets module loaded")
 _DEFAULT_PATH = "/etc/salt/dynamicsecrets.sqlite"
 
 
-class DynamicSecretsStoreSQLite(dict):
+class SecretsStore(dict):
+    def __init__(self):
+        super(SecretsStore, self).__init__()
+
+    @staticmethod
+    def _deserialize_secret(secret):
+        if secret.startswith("-----BEGIN RSA PRIVATE KEY"):
+            key = RSA.importKey(secret)
+            return {
+                "key": key.exportKey("PEM"),
+                "public": key.exportKey("OpenSSH"),
+                "public_pem": key.publickey().exportKey("PEM"),
+            }
+        else:
+            return secret
+
+    def get(self, username, default=None):
+        try:
+            return self[username]
+        except KeyError:
+            return default
+
+    def items(self):
+        return dict(self.iteritems())
+
+    def iteritems(self):
+        raise NotImplementedError()
+
+
+class DynamicSecretsStoreSQLite(SecretsStore):
     def __init__(self, path):
-        super(DynamicSecretsStoreSQLite, self).__init__(path)
+        super(DynamicSecretsStoreSQLite, self).__init__()
         self._conn = None
 
         if not os.path.exists(os.path.dirname(path)):
@@ -34,18 +63,6 @@ class DynamicSecretsStoreSQLite(dict):
                     secret TEXT
                 )"""
             )
-
-    @staticmethod
-    def _deserialize_secret(secret):
-        if secret.startswith("-----BEGIN RSA PRIVATE KEY"):
-            key = RSA.importKey(secret)
-            return {
-                "key": key.exportKey("PEM"),
-                "public": key.exportKey("OpenSSH"),
-                "public_pem": key.publickey().exportKey("PEM"),
-            }
-        else:
-            return secret
 
     def __setitem__(self, secret_name, secret):
         c = self._conn.cursor()
@@ -65,12 +82,6 @@ class DynamicSecretsStoreSQLite(dict):
         finally:
             c.close()
 
-    def get(self, username, default=None):
-        try:
-            return self[username]
-        except KeyError:
-            return default
-
     def __contains__(self, secret_name):
         c = self._conn.cursor()
         c.execute("SELECT count(*) FROM store WHERE secretname=?", (secret_name,))
@@ -86,9 +97,6 @@ class DynamicSecretsStoreSQLite(dict):
     def __iter__(self):
         return (k for k, _ in self.iteritems())
 
-    def items(self):
-        return dict(self.iteritems())
-
     def iteritems(self):
         c = self._conn.cursor()
         try:
@@ -101,9 +109,18 @@ class DynamicSecretsStoreSQLite(dict):
             c.close()
 
 
-class DynamicSecretsStoreVault(dict):
+class DynamicSecretsStoreVault(SecretsStore):
     def __init__(self):
         super(DynamicSecretsStoreVault, self).__init__()
+
+        try:
+            import hvac
+        except ImportError:
+            raise Exception("DynamicSecrets pillar can't be initialized because of missing Vault support "
+                            "(install the Python hvac library)")
+
+    def iteritems(self):
+        pass
 
 
 class DynamicSecretsPillar(object):
