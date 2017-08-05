@@ -15,8 +15,9 @@ _log.info("dynamic secrets module loaded")
 _DEFAULT_PATH = "/etc/salt/dynamicsecrets.sqlite"
 
 
-class DynamicSecretsStore(dict):
+class DynamicSecretsStoreSQLite(dict):
     def __init__(self, path):
+        super(DynamicSecretsStoreSQLite, self).__init__(path)
         self._conn = None
 
         if not os.path.exists(os.path.dirname(path)):
@@ -100,11 +101,16 @@ class DynamicSecretsStore(dict):
             c.close()
 
 
-class DynamicSecretsPillar(DynamicSecretsStore):
+class DynamicSecretsStoreVault(dict):
+    def __init__(self):
+        super(DynamicSecretsStoreVault, self).__init__()
+
+
+class DynamicSecretsPillar(object):
     _PWDICT = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 
-    def __init__(self, *args, **kwargs):
-        super(DynamicSecretsPillar, self).__init__(*args, **kwargs)
+    def __init__(self, db):
+        self.db = db
 
     def _alphaencoding(self, rndstring):
         pwstr = "".join([
@@ -120,9 +126,9 @@ class DynamicSecretsPillar(DynamicSecretsStore):
     def create(self, secret_name, encode=None, length=16, secret_type="password"):
         if secret_type == "password":
             if encode == "base64":
-                self[secret_name] = base64.b64encode(os.urandom(length))
+                self.db[secret_name] = base64.b64encode(os.urandom(length))
             else:
-                self[secret_name] = self._alphaencoding(os.urandom(length))
+                self.db[secret_name] = self._alphaencoding(os.urandom(length))
         elif secret_type == "rsa":
             if length < 2048:
                 keylen = 2048
@@ -131,14 +137,14 @@ class DynamicSecretsPillar(DynamicSecretsStore):
 
             key = RSA.generate(keylen)
             # Save only the private key to the database, we calculate the public key on read
-            self[secret_name] = key.exportKey("PEM")
+            self.db[secret_name] = key.exportKey("PEM")
         elif secret_type == "uuid":
             # uuid.uuid4() uses os.urandom(), so this should be reasonably unguessable
-            self[secret_name] = str(uuid.uuid4())
+            self.db[secret_name] = str(uuid.uuid4())
 
 
 def ext_pillar(minion_id, pillar, *roledefs):
-    db = DynamicSecretsPillar(_DEFAULT_PATH)
+    db = DynamicSecretsPillar(DynamicSecretsStoreSQLite(_DEFAULT_PATH))
 
     # (
     #   {'*': [
